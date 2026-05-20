@@ -14,24 +14,72 @@ $PAGE->set_heading(get_string('monitoring_title', 'local_atasan_monitoring'));
 
 // 1. Tangkap Parameter Pencarian
 $s_nik    = optional_param('s_nik', '', PARAM_TEXT);
-$s_course = optional_param('s_course', '', PARAM_TEXT);
+$s_course = optional_param('s_course', 0, PARAM_INT); 
 $s_status = optional_param('s_status', '', PARAM_ALPHA); 
 
 echo $OUTPUT->header();
 
-// 2. Form Pencarian
+// Ambil daftar kursus yang berstatus PUBLISH (visible = 1) untuk Dropdown Filter
+global $DB;
+$all_courses = $DB->get_records_menu('course', array('visible' => 1), 'fullname ASC', 'id, fullname');
+
+// 2. Form Pencarian dengan Fitur Autocomplete (Desain Grid yang Lebih Rapi)
 echo '<div class="card mb-4"><div class="card-body">';
-echo '<form action="' . $PAGE->url . '" method="get" class="form-inline">';
-echo '<input type="text" name="s_nik" class="form-control mr-2 mb-2" placeholder="Cari NIK..." value="' . s($s_nik) . '">';
-echo '<input type="text" name="s_course" class="form-control mr-2 mb-2" placeholder="Cari Kursus..." value="' . s($s_course) . '">';
-echo '<select name="s_status" class="form-control mr-2 mb-2">
-        <option value="all" ' . ($s_status == 'all' ? 'selected' : '') . '>-- Semua Status --</option>
-        <option value="done" ' . ($s_status == 'done' ? 'selected' : '') . '>Selesai</option>
-        <option value="progress" ' . ($s_status == 'progress' ? 'selected' : '') . '>Sedang Berjalan</option>
-      </select>';
-echo '<button type="submit" class="btn btn-primary mb-2">Filter</button>';
-echo '<a href="' . $PAGE->url . '" class="btn btn-secondary ml-2 mb-2">Reset</a>';
+echo '<form action="' . $PAGE->url . '" method="get">';
+echo '<div class="row align-items-end">'; // Menggunakan Grid Row Bootstrap
+
+// Kolom 1: NIK
+echo '<div class="col-md-3 mb-3">
+        <label for="s_nik" class="form-label font-weight-bold">NIK Karyawan</label>
+        <input type="text" name="s_nik" id="s_nik" class="form-control w-100" placeholder="Ketik NIK..." value="' . s($s_nik) . '">
+      </div>';
+
+// Kolom 2: Kursus (Diberi ruang lebih besar agar teks tidak terpotong)
+echo '<div class="col-md-4 mb-3">
+        <label for="id_s_course" class="form-label font-weight-bold">Nama Kursus / Pelatihan</label>
+        <select name="s_course" id="id_s_course" class="form-control custom-select w-100">';
+echo '<option value="0">-- Semua Kursus di LMS --</option>';
+if (!empty($all_courses)) {
+    foreach ($all_courses as $cid => $cname) {
+        if ($cid == SITEID) {
+            continue;
+        }
+        $selected = ($s_course == $cid) ? 'selected' : '';
+        echo '<option value="' . $cid . '" ' . $selected . '>' . s($cname) . '</option>';
+    }
+}
+echo '</select></div>';
+
+// Kolom 3: Status
+echo '<div class="col-md-3 mb-3">
+        <label for="s_status" class="form-label font-weight-bold">Status Progres</label>
+        <select name="s_status" id="s_status" class="form-control custom-select w-100">
+            <option value="all" ' . ($s_status == 'all' ? 'selected' : '') . '>-- Semua Status --</option>
+            <option value="done" ' . ($s_status == 'done' ? 'selected' : '') . '>Selesai</option>
+            <option value="progress" ' . ($s_status == 'progress' ? 'selected' : '') . '>Sedang Berjalan</option>
+        </select>
+      </div>';
+
+// Kolom 4: Tombol Aksi (Disejajarkan secara proporsional)
+echo '<div class="col-md-2 mb-3 text-right">
+        <div class="d-flex justify-content-end">
+            <button type="submit" class="btn btn-primary mr-2 flex-grow-1">Filter</button>
+            <a href="' . $PAGE->url . '" class="btn btn-secondary flex-grow-1">Reset</a>
+        </div>
+      </div>';
+
+echo '</div>'; // Tutup row
 echo '</form></div></div>';
+
+// SUNTIKAN JAVASCRIPT MOODLE (Mengubah select biasa menjadi Autocomplete / searchable select)
+$PAGE->requires->js_call_amd('core/form-autocomplete', 'enhance', array(
+    '#id_s_course', // Selector ID element select kita
+    false,          // Menolak penginputan teks kustom di luar opsi (tags = false)
+    null,           // No ajax url (karena datanya langsung dimuat dari local array php)
+    'Ketik nama kursus...', // Placeholder teks pencarian
+    false,          // Case sensitive = false
+    true            // Show suggestions langsung saat diklik
+));
 
 // 3. Dapatkan ID bawahan (Recursive)
 $bawahan_ids = get_semua_bawahan_ids($USER->username);
@@ -48,7 +96,6 @@ class MonitoringTable extends table_sql {
         global $DB;
         parent::__construct($uniqueid);
         
-        // Tambahkan kolom 'finalgrade'
         $this->define_columns(['nik', 'fullname', 'coursename', 'finalgrade', 'status']);
         $this->define_headers(['NIK', 'Nama Karyawan', 'Nama Kursus', 'Nilai Akhir', 'Status / Tgl Selesai']);
         
@@ -57,7 +104,6 @@ class MonitoringTable extends table_sql {
         
         list($insql, $params) = $DB->get_in_or_equal($bawahan_ids, SQL_PARAMS_NAMED, 'bw');
         
-        // Query untuk mengambil final grade dari tabel grade_grades
         $fields = "ue.id AS id, u.id AS userid, c.id AS courseid, u.username AS nik, u.firstname, u.lastname, 
                    c.fullname AS coursename, cp.timecompleted, gg.finalgrade";
         
@@ -69,16 +115,18 @@ class MonitoringTable extends table_sql {
                  LEFT JOIN {grade_items} gi ON (gi.courseid = c.id AND gi.itemtype = 'course')
                  LEFT JOIN {grade_grades} gg ON (gg.itemid = gi.id AND gg.userid = u.id)";
         
-        $where = "u.id $insql AND u.deleted = 0";
+        $where = "u.id $insql AND u.deleted = 0 AND c.visible = 1";
         
         if (!empty($s_nik)) {
             $where .= " AND u.username LIKE :s_nik";
             $params['s_nik'] = '%' . $s_nik . '%';
         }
-        if (!empty($s_course)) {
-            $where .= " AND c.fullname LIKE :s_course";
-            $params['s_course'] = '%' . $s_course . '%';
+        
+        if (!empty($s_course) && $s_course > 0) {
+            $where .= " AND c.id = :s_course";
+            $params['s_course'] = $s_course;
         }
+        
         if ($s_status === 'done') {
             $where .= " AND cp.timecompleted IS NOT NULL";
         } else if ($s_status === 'progress') {
@@ -102,12 +150,10 @@ class MonitoringTable extends table_sql {
         return html_writer::link($url, s($values->coursename));
     }
 
-    // Format tampilan nilai
     public function col_finalgrade($values) {
         if (is_null($values->finalgrade)) {
             return '-';
         }
-        // Membulatkan 2 angka di belakang koma
         return format_float($values->finalgrade, 2);
     }
 
