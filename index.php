@@ -104,36 +104,38 @@ class MonitoringTable extends table_sql {
         
         list($insql, $params) = $DB->get_in_or_equal($bawahan_ids, SQL_PARAMS_NAMED, 'bw');
         
-        $fields = "ue.id AS id, u.id AS userid, c.id AS courseid, u.username AS nik, u.firstname, u.lastname, 
-                   c.fullname AS coursename, cp.timecompleted, gg.finalgrade";
-        
-        $from = "{user_enrolments} ue
-                 JOIN {enrol} e ON e.id = ue.enrolid
-                 JOIN {course} c ON c.id = e.courseid
-                 JOIN {user} u ON u.id = ue.userid
-                 LEFT JOIN {course_completions} cp ON (cp.course = c.id AND cp.userid = u.id)
-                 LEFT JOIN {grade_items} gi ON (gi.courseid = c.id AND gi.itemtype = 'course')
-                 LEFT JOIN {grade_grades} gg ON (gg.itemid = gi.id AND gg.userid = u.id)";
-        
-        $where = "u.id $insql AND u.deleted = 0 AND c.visible = 1";
-        
-        if (!empty($s_nik)) {
-            $where .= " AND u.username LIKE :s_nik";
-            $params['s_nik'] = '%' . $s_nik . '%';
-        }
-        
-        if (!empty($s_course) && $s_course > 0) {
-            $where .= " AND c.id = :s_course";
-            $params['s_course'] = $s_course;
-        }
-        
-        if ($s_status === 'done') {
-            $where .= " AND cp.timecompleted IS NOT NULL";
-        } else if ($s_status === 'progress') {
-            $where .= " AND cp.timecompleted IS NULL";
-        }
-        
-        $this->set_sql($fields, $from, $where, $params);
+        // 1. Ubah $fields agar menggunakan fungsi MAX() pada finalgrade dan timecompleted
+            $fields = "MAX(ue.id) AS id, u.id AS userid, c.id AS courseid, u.username AS nik, u.firstname, u.lastname, 
+                    c.fullname AS coursename, MAX(cp.timecompleted) AS timecompleted, MAX(gg.finalgrade) AS finalgrade";
+
+            $from = "{user_enrolments} ue
+                    JOIN {enrol} e ON e.id = ue.enrolid
+                    JOIN {course} c ON c.id = e.courseid
+                    JOIN {user} u ON u.id = ue.userid
+                    LEFT JOIN {course_completions} cp ON (cp.course = c.id AND cp.userid = u.id)
+                    LEFT JOIN {grade_items} gi ON (gi.courseid = c.id AND gi.itemtype = 'course')
+                    LEFT JOIN {grade_grades} gg ON (gg.itemid = gi.id AND gg.userid = u.id)";
+
+            $where = "u.id $insql AND u.deleted = 0 AND c.visible = 1";
+
+            if (!empty($s_nik)) {
+                $where .= " AND u.username LIKE :s_nik";
+                $params['s_nik'] = '%' . $s_nik . '%';
+            }
+            if (!empty($s_course) && $s_course > 0) {
+                $where .= " AND c.id = :s_course";
+                $params['s_course'] = $s_course;
+            }
+            if ($s_status === 'done') {
+                $where .= " AND cp.timecompleted IS NOT NULL";
+            } else if ($s_status === 'progress') {
+                $where .= " AND cp.timecompleted IS NULL";
+            }
+
+            // 2. Tambahkan GROUP BY di akhir variabel $where agar nama dan kursus yang sama digabung jadi satu
+            $where .= " GROUP BY u.id, c.id, u.username, u.firstname, u.lastname, c.fullname";
+
+            $this->set_sql($fields, $from, $where, $params);
     }
 
     public function col_nik($values) {
